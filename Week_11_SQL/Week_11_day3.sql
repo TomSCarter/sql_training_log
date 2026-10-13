@@ -232,5 +232,34 @@ SELECT
     g_rank
 FROM total_rev_cte
 -- 15 min. Could not work out how to get the share of total, without output collapsing to 1 row? Tried a subquery but didnt work
+-- Issues: fan-out due to SUM(Total) after joining InvoiceLine. SUM(total_revenue) collapses everything, needs to be a window function. cumulative_share is actually cumulative_revenue as written. Round at the end. How does the running total deal with ties?
+--Rework:
+WITH total_rev_cte AS (
+    SELECT
+        g.Name AS genre_name,
+        g.GenreId,
+        SUM(il.UnitPrice * il.Quantity) AS total_revenue,
+        ROW_NUMBER() OVER(ORDER BY SUM(il.UnitPrice * il.Quantity) DESC, g.Name DESC) AS g_rank
+    FROM
+        InvoiceLine AS il
+    INNER JOIN Track AS t USING(TrackId)
+    INNER JOIN Genre AS g USING(GenreId)
+    GROUP BY
+        g.GenreId, 
+        g.Name
+)
+
+SELECT
+    genre_name,
+    total_revenue,
+    ROUND(
+        (total_revenue/SUM(total_revenue) OVER()), 
+        3) AS share,
+    ROUND(
+        (SUM(total_revenue) OVER(ORDER BY g_rank) / SUM(total_revenue) OVER())
+        , 3) AS cumulative_share,
+    g_rank
+FROM total_rev_cte
+-- If RANK or DENSE_RANK is used then tied genres both get the same cumulative share. ROW_NUMBER fixes this, adding g.NAME to ORDER BY stops the tie-break being arbitrary (and possibly not reproducible). A more general fix is to define the window (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) rather than use the default (unbounded range based on value)
 
 -- Optional transfer if time allows: LeetCode 1204, Last Person to Fit in the Bus, which uses a running total as a stopping condition.
