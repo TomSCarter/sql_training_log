@@ -127,7 +127,21 @@ WHERE days_since_login = 1
 
 -- Block 3: Comparing more than one row back
 -- Transfer only: LeetCode 180, Consecutive Numbers. Think about how many offsets you need, and in which directions. Also check whether the output needs DISTINCT.
-
+-- Write your PostgreSQL query statement below
+WITH counts AS(
+    SELECT
+        id,
+        num,
+        LAG(num, 1) OVER(ORDER BY id) AS prev,
+        LAG(num, 2) OVER(ORDER BY id) AS two_prev
+    FROM Logs
+)
+SELECT
+    DISTINCT num AS ConsecutiveNums
+FROM counts
+WHERE num = prev AND prev = two_prev
+--4:45 min. easy
+-- If id contained gaps, then we would need to calculate the offsets beween ids
 
 -- Block 4: The timeline-gap trap (local only)
 
