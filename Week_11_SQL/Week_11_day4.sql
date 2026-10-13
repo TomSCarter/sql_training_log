@@ -39,12 +39,90 @@ FROM
     monthly
 ORDER BY shop_month
 -- Transfer: LeetCode 197, Rising Temperature. Read the data carefully and think about whether "the previous row" and "yesterday" are always the same thing.
-
+-- Grain: List of ids
+WITH cte AS(
+    SELECT
+        id,
+        temperature - LAG(temperature) OVER(ORDER BY recordDate) AS temp_diff,
+        recordDate - LAG(recordDate) OVER(ORDER BY recordDate) AS date_diff
+    FROM Weather
+)
+SELECT
+    id
+FROM 
+    cte
+WHERE temp_diff > 0 AND date_diff = 1
+-- 7 min (4 min before I had to add date_diff)
+-- Common alternative is a self-join matching date to a date 1 day earlier
 
 -- Block 2: Offsets within partitions
 -- Local: for each customer, the number of days between each invoice and their previous one. Then build on it to get each customer's average gap between purchases. In SQLite, julianday() turns dates into numbers you can subtract. Decide how each customer's first invoice should be handled in both the gap column and the average.
+SELECT
+    CustomerId,
+    AVG(InvoiceDate - LAG(InvoiceDate) OVER(PARTITION BY CustomerId ORDER BY InvoiceDate)) AS avg_gap
+FROM Invoice
+GROUP BY CustomerId
+-- 7min doesnt run. You cant put a window inside an aggregation as GROUP BY runs before SELECT(windows)
+WITH gaps AS(
+    SELECT
+        CustomerId,
+        julianday(InvoiceDate) - julianday(LAG(InvoiceDate) OVER(PARTITION BY CustomerId ORDER BY InvoiceDate)) AS inv_gap
+    FROM Invoice
+)
+SELECT
+    CustomerId,
+    AVG(inv_gap) as avg_gap
+FROM gaps
+GROUP BY CustomerId
+-- Further 4:30. First invoices gap is null, which is good as it doesnt get used in average.
 
 -- Transfer: LeetCode 550, Game Play Analysis IV. This is a grain test as well as an offset problem: the final output is a single number, so work out what each intermediate layer represents.
+-- Grain: A single value count of players scaled to a percentage. Starting from 1 row per player login
+-- Write your PostgreSQL query statement below
+WITH first_l AS(
+    SELECT
+        player_id,
+        MIN(event_date) AS first_login
+    FROM
+        Activity
+    GROUP BY player_id
+),
+second AS (
+    SELECT
+    player_id,
+    date(a.event_date) - date(f.first_login) AS days_since_login
+FROM
+    Activity a
+INNER JOIN first_l f USING(player_id)
+)
+SELECT
+    ROUND(COUNT(DISTINCT s.player_id) / (SELECT COUNT(*) FROM Activity a GROUP BY a.PlayerId), 2) AS fraction
+FROM second s
+WHERE days_since_login = 1
+-- 16min but doesnt like final calculation. Typo in final select (PlayerId), subquery returns multiple values
+
+WITH first_l AS(
+    SELECT
+        player_id,
+        MIN(event_date) AS first_login
+    FROM
+        Activity
+    GROUP BY player_id
+),
+second AS (
+    SELECT
+    player_id,
+    date(a.event_date) - date(f.first_login) AS days_since_login
+FROM
+    Activity a
+INNER JOIN first_l f USING(player_id)
+)
+SELECT
+    ROUND(CAST(COUNT(DISTINCT s.player_id) AS numeric) / (SELECT COUNT(*) FROM first_l), 2) AS fraction
+FROM second s
+WHERE days_since_login = 1
+-- Needed some help with Postgres quirks. Dividing 2 integers gives 0 not a fraction, so 1 must be cast to numeric. Subquery must have its own brackets
+-- cast with CAST(... AS numeric) or ...::numeric
 
 
 -- Block 3: Comparing more than one row back
