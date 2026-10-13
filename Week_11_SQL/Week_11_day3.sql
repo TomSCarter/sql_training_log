@@ -201,7 +201,31 @@ ORDER BY
     visited_on
 -- 11min. But no idea how to remove the rows that are averaging over less than 7 days?
 -- Spent another 20 min working on this but needs rewriting with an initial group by date. The spec is really crap and misleading, 'Compute the moving average of how much the customer paid' should be moving average of total daily sales for the store, shoud mention you need to filter out the first 6 days.
-
+-- Another 20min on this, but finally working. The spec really is bad
+WITH
+customer_totals AS(
+    SELECT
+        visited_on,
+        SUM(amount) AS amount
+    FROM 
+        Customer
+    GROUP BY
+        visited_on
+),
+windowed AS(
+    SELECT
+        visited_on,
+        SUM(amount) OVER(ORDER BY visited_on RANGE BETWEEN INTERVAL '6' DAY PRECEDING AND CURRENT ROW) AS seven_day_total,
+        AVG(amount) OVER(ORDER BY visited_on RANGE BETWEEN INTERVAL '6' DAY PRECEDING AND CURRENT ROW) AS average_amount
+    FROM customer_totals
+)
+SELECT
+    visited_on,
+    seven_day_total AS amount,
+    ROUND(average_amount, 2) AS average_amount
+FROM windowed
+WHERE visited_on >= (SELECT MIN(visited_on) FROM Customer) + 6
+ORDER BY visited_on
 
 
 
