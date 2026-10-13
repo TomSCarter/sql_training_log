@@ -144,7 +144,63 @@ WHERE num = prev AND prev = two_prev
 -- If id contained gaps, then we would need to calculate the offsets beween ids
 
 -- Block 4: The timeline-gap trap (local only)
-
 -- Monthly revenue per billing country, with each month compared to that country's previous month. Then look at the output carefully: do some countries have months with no sales at all? If so, what is LAG actually comparing against for the month after a gap? Write in your log what's wrong and why.
+-- Grain: 1 row per month per country
+WITH monthly_rev AS (
+    SELECT
+        ROUND(SUM(Total), 2) AS monthly_revenue,
+        BillingCountry,
+        strftime('%Y-%m', InvoiceDate) AS year_month
+    FROM Invoice
+    GROUP BY BillingCountry, strftime('%Y-%m', InvoiceDate)
+)
+SELECT
+    BillingCountry,
+    year_month,
+    monthly_revenue,
+    LAG(monthly_revenue) OVER(PARTITION BY BillingCountry ORDER BY year_month) AS prev_recorded_month_revenue
+FROM monthly_rev
+ORDER BY BillingCountry, year_month
+-- 8 min. As expected prev_month_revenue compares to previous value not previous month (if there is a gap)
 
 -- Stretch (only if you have time): fix it by building a complete calendar of months (a "date spine") with a recursive CTE, then LEFT JOIN the revenue onto it so that missing months appear as zero. This is a standard analytics-engineering pattern and comes up again in dbt.
+WITH RECURSIVE calendar AS(
+    SELECT date(MIN(InvoiceDate),  'start of month') AS month_start
+    FROM Invoice
+    UNION ALL
+    SELECT date(month_start, '+1 month')
+    FROM calendar
+    WHERE date(month_start, '+1 month') <= (SELECT MAX(InvoiceDate) FROM Invoice)
+),
+countrys AS (
+    SELECT
+    DISTINCT BillingCountry AS BillingCountry,
+    strftime('%Y-%m', month_start) AS months
+FROM 
+    calendar
+CROSS JOIN Invoice
+),
+monthly_rev AS (
+    SELECT
+        ROUND(SUM(Total), 2) AS monthly_revenue,
+        BillingCountry,
+        strftime('%Y-%m', InvoiceDate) AS year_month
+    FROM Invoice
+    GROUP BY BillingCountry, strftime('%Y-%m', InvoiceDate)
+),
+joined AS(
+    SELECT
+    c.months AS year_month,
+    c.BillingCountry,
+    COALESCE(m.monthly_revenue, 0) AS monthly_revenue
+FROM countrys c 
+LEFT JOIN monthly_rev m ON c.months = m.year_month AND c.BillingCountry = m.BillingCountry
+)
+SELECT
+    BillingCountry,
+    year_month,
+    monthly_revenue,
+    LAG(monthly_revenue) OVER(PARTITION BY BillingCountry ORDER BY year_month) AS prev_month_revenue
+FROM joined
+ORDER BY BillingCountry, year_month
+-- Reduce before joining, CTE cross joins entire Invoice table with Calendar, select distinct countries first
