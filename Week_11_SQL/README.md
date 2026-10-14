@@ -442,7 +442,7 @@ Trimmed:
         FROM
             (SELECT DISTINCT product_id FROM Products) p
         LEFT JOIN latest_price l ON p.product_id = l.product_id
-- rewrote with window
+- rewrote with window, cleaner
         WITH latest_prices AS(
             SELECT
                 product_id,
@@ -461,7 +461,7 @@ Trimmed:
         LEFT JOIN latest_prices l ON x.product_id = l.product_id
         WHERE rank = 1 OR rank IS NULL
 
-- Moved condition from WHERE to ON
+- Moved condition from WHERE to ON, more efficient
         WITH latest_prices AS(
             SELECT
                 product_id,
@@ -478,3 +478,15 @@ Trimmed:
         FROM
             (SELECT DISTINCT product_id FROM Products) x 
         LEFT JOIN latest_prices l ON x.product_id = l.product_id AND rank = 1
+
+- Block 2: A multi-tier pipeline from scratch (local, 30 min)
+
+    For each billing country, find the month with its largest month-over-month revenue increase, showing the month, that month's revenue and the size of the increase. Build it on your Day 4 date spine so gaps are handled correctly. Before writing any SQL, write down your CTE chain with one comment line per CTE saying what it holds and its grain. Then fill in the SQL.
+
+    Think about ties: two months with the same increase. That's Day 3's ranking decision again.
+
+    - CTE 1: RECURSIVE CTE holding calendar from InvoiceDate Min to Max, 1 row per month. CROSS JOINED with distinct countries
+    - CTE 2: sum(total) GROUP BY country and month to get monthly revenues. Grain reduced from 1 row per invoice to 1 row per country and month
+    - CTE 3: LEFT JOIN CTE 2 to CTE 1 and coalesce nulls with 0. Grain 1 row per country and month
+    - CTE 4: From CTE3: LAG(monthly_revenue) window PARITION BY country ORDER BY month to give month-over-month increases and amount of increase. 1 row per country and month
+    - Final: ROW_NUMBER by revenue increase (partitioning) with month as tie breaker then in outer query Filter to largest revenue increase and return specified rows at grain: 1 row per billing country
