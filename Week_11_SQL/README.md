@@ -381,3 +381,100 @@ Trimmed:
     7. Integer division? (Postgres: also qualify columns)
 - After running:
     8. Row count matches the grain? Spot-check one entity against a simple query.
+
+- Leetcode 1164
+    - Grain: 1 row per product from 1 row per price change per product
+    - 15 min. But breaks when a product with no price change is input (needing default price of 10). Need to fill those products without a change date with 10?
+        WITH filtered_date AS(
+            SELECT 
+                product_id,
+                new_price,
+                change_date
+            FROM
+                Products
+            WHERE change_date <= '2019-08-16'
+        ),
+        change_dates AS (SELECT
+            product_id,
+            MAX(change_date) AS recent_change
+        FROM
+            filtered_date
+        GROUP BY
+            product_id
+        )
+        SELECT
+            c.product_id,
+            p.new_price
+        FROM
+            change_dates c
+        INNER JOIN Products p on c.recent_change = p.change_date AND c.product_id = p.product_id
+    - Faffed around before realising I just needed a list of distinct product_ids
+  
+        WITH filtered_date AS(
+            SELECT 
+                product_id,
+                new_price,
+                change_date
+            FROM
+                Products
+            WHERE change_date <= '2019-08-16'
+        ),
+        latest_date AS (
+            SELECT
+                product_id,
+                MAX(change_date) AS recent_change
+            FROM
+                filtered_date
+            GROUP BY
+                product_id
+        ),
+        latest_price AS (SELECT
+                c.product_id,
+                p.new_price,
+                c.recent_change
+            FROM
+                latest_date c
+            INNER JOIN Products p on c.recent_change = p.change_date AND c.product_id = p.product_id
+        )
+        SELECT
+            p.product_id,
+            COALESCE(l.new_price, 10) AS price
+        FROM
+            (SELECT DISTINCT product_id FROM Products) p
+        LEFT JOIN latest_price l ON p.product_id = l.product_id
+- rewrote with window
+        WITH latest_prices AS(
+            SELECT
+                product_id,
+                new_price,
+                ROW_NUMBER() OVER(PARTITION BY product_id ORDER BY change_date DESC) AS rank
+            FROM
+                Products
+            WHERE
+                change_date <= '2019-08-16'
+        )
+        SELECT
+            x.product_id,
+            COALESCE(l.new_price, 10) AS price
+        FROM
+            (SELECT DISTINCT product_id FROM Products) x 
+        LEFT JOIN latest_prices l ON x.product_id = l.product_id
+        WHERE rank = 1 OR rank IS NULL
+
+- Moved condition from WHERE to ON
+        WITH latest_prices AS(
+            SELECT
+                product_id,
+                new_price,
+                ROW_NUMBER() OVER(PARTITION BY product_id ORDER BY change_date DESC) AS rank
+            FROM
+                Products
+            WHERE
+                change_date <= '2019-08-16'
+        )
+        SELECT
+            x.product_id,
+            COALESCE(l.new_price, 10) AS price
+        FROM
+            (SELECT DISTINCT product_id FROM Products) x 
+        LEFT JOIN latest_prices l ON x.product_id = l.product_id AND rank = 1
