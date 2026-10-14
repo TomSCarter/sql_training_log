@@ -281,3 +281,103 @@
 # Day 3
 - Window functions run in SELECT, so cant use the result in WHERE, GROUP BY or HAVING. Need a CTE or subquery
 - Default frame is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, rows with equal ORDER BY values (peers) are treated as one unit so get the same running total (inc each others values)
+- The fan-out trap. In one query, show each customer's total invoiced amount (using Invoice.Total) alongside the number of tracks they've bought.
+    - When combining tables at different grains, joining finer to coarser grain will duplicate the fine values. So if aggregating the fine table values, do it before joining. Think about the grain of the starting tables and intended output at the start.
+- BLOCK 1: TIES
+- Local: within each genre, rank tracks by unit price using ROW_NUMBER, RANK and DENSE_RANK in one query. Find a genre where all three differ and explain the tie behaviour in your log.
+    - No results where all three ranks differ, because there are only 2 prices of track (0.99 and 1.99) and how the prices are spead in Chinook. When using ROW_NUMBER its important to add a second column to ORDER BY as a reproducible tie breaker
+- BLOCK 2: TOP-N PER PARTITION
+- Local: the top 3 best-selling tracks by quantity in each genre. Aggregate before ranking, and log which ranking function you chose and what happens to a tied fourth track.
+    - Spent a few min trying rank vs dense rank vs row number. As there are so many ties, none are meaningful. Chose ROW_NUMBER as top 3 only is specified, and it doesn't show the 10s of ties. Could ORDER BY number_sales then track_name as reproducible tie-break.
+- LeetCode 185, Department Top Three Salaries.
+- LeetCode 1070
+    - Wasted time writing a '1 row per product' query with GROUP BY, read grain more carefully and write it down before writing any SQL
+    - RANK or DENSE_RANK would have worked, the former skips to 3 if there is a tie for 1.
+- Block 4: Explicit frames
+- Local: a 3-invoice moving average of invoice totals for each customer, in date order. Then note when ROWS and RANGE would give different results.
+    - ROWS vs RANGE. ROWS defines the number of rows in the window whereas range the values. Range is a way to range between values or a value and current row value, includes duplicates. They differ when there are ties and gaps.
+- LeetCode 1321
+    - This was a garbage spec that required several reworks to nail down what it actually wanted. Next time look carefully at output and ignore spec text if clearly wrong.
+- Block 5: The default-frame trap
+- Local only: rank genres by total revenue from highest to lowest, and show each genre's share and the cumulative share (a Pareto view). Then ask whether the running total would still be correct if two genres had identical revenue. This one stays local because the platforms rarely test this trap directly.
+    - Issues: fan-out due to SUM(Total) after joining InvoiceLine. SUM(total_revenue) collapses everything, needs to be a window function. cumulative_share was actually cumulative_revenue as written. Round at the end.
+    - If RANK or DENSE_RANK is used then tied genres both get the same cumulative share. ROW_NUMBER fixes this, adding g.NAME to ORDER BY stops the tie-break being arbitrary (and possibly not reproducible). A more general fix is to define the window (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) rather than use the default (unbounded range based on value)
+
+
+# Day 4
+Day 4: LAG/LEAD and Chronological Offsets
+- Month-over-month (Block 1)
+    - Extracting months in SQLite: strftime('%Y-%m',InvoiceDate) AS shop_month
+    - Use NULLIF(..,0) to protect against dividing by 0.
+    - COALESCE not need for first month as null less misleading
+    - Percentage change divides by the previous month, not the current one
+- LeetCode 197 / 180 / Block 4
+    - LAG gives the previous row (or a defined number of rows back), not the day before if there are gaps. Have to work around this by also calculating a date differential as a filter
+- Average gap (Block 2)
+    - A window can't go inside an aggregate as GROUP BY runs first, so it has to be pulled out into a CTE
+    - AVG ignores nulls which is good, whereas if converted to zero they'll mess with the denominator in averaging
+- LeetCode 550
+    - Scalar subqueries must return a single value
+    - Postgres quirks
+        - Dividing two integers gives an integer not a decimal, one must be converted to numeric
+        - General: CAST(value AS numeric)
+        - Postgres specific: value::numeric
+- Date spine
+    - Recursive CTE to generate a calendar of months
+
+        ```
+        WITH RECURSIVE calendar AS(
+        SELECT date(MIN(InvoiceDate),  'start of month') AS month_start
+        FROM Invoice
+        UNION ALL
+        SELECT date(month_start, '+1 month')
+        FROM calendar
+        WHERE date(month_start, '+1 month') <= (SELECT MAX(InvoiceDate) FROM Invoice)
+        ),
+    
+    - Anchor, recursive part, stop condition
+    - 'start of month' as second argument in date means the date is always start of the month
+    - spine → cross-join with distinct entities → LEFT JOIN facts → COALESCE to 0
+
+
+# Day 5
+Multi-Tier CTEs and Exam Preparation
+- CTEs make queries clearer, not faster. Materialisation behaviour depends on the engine
+- Refactoring a nested query. Use Except to compare queries, have to remove ORDER BY from both and put CTEs at the very start.
+    - Run except in both directions and count rows
+    - A window over an aggregate works (GROUP BY before SELECT) and removed a whole join
+    - EXPLAIN QUERY PLAN on both versions
+        - Old reading Invoice twice and Customer 3 times, fixed in refactor
+            - Duplicated logic means duplicated work for the engine
+
+# Pre-flight checklist
+
+- Before writing:
+    - Grain of target output? Grain of joining tables (fan out risk)?
+    - Check values in example output are consistent with interpretation of spec
+    - Is each filter in the right layer?
+        - Row conditions in WHERE, group conditions in HAVING, conditions on window in outer query
+    - Every scalar subquery must return 1 row
+    - Does previous mean previous row or previous date?
+- Before runnning:
+    - Join types: Left or inner, do we want to keep nulls? does a later WHERE or INNER JOIN undo my LEFT JOIN?
+    - Windows: should it be ROWS or RANGE frame? dense/rank/row_number, how are ties dealt with? Does the ORDER BY leave ties? write ROWS explicitly for runnng totals
+    - Postgres: Have I given explicit table references and am I dividing integers?
+    - Grouping: Is every SELECT column either in the GROUP BY or inside an aggregate?
+- After running:
+    - Correct column names and number?
+    - Row count consistent with intended grain?
+    - Check one entities values with a simple single-table query
+
+Trimmed:
+- Before writing:
+    1. Grain: of the output (confirmed against the example) and of each table I'm joining?
+    2. "Previous": previous row or previous date?
+- Before running:
+    3. Filters: is each one in the right layer (WHERE / HAVING / outer query)?
+    4. One value where one is expected: every SELECT column grouped or aggregated? Every scalar subquery returns 1 row?
+    5. LEFT JOINs: does a later WHERE or INNER JOIN undo one?
+    6. Windows: ties handled, ORDER BY deterministic, ROWS written explicitly?
+    7. Integer division? (Postgres: also qualify columns)
+- After running:
+    8. Row count matches the grain? Spot-check one entity against a simple query.
