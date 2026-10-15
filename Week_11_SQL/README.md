@@ -490,3 +490,178 @@ Trimmed:
     - CTE 3: LEFT JOIN CTE 2 to CTE 1 and coalesce nulls with 0. Grain 1 row per country and month
     - CTE 4: From CTE3: LAG(monthly_revenue) window PARITION BY country ORDER BY month to give month-over-month increases and amount of increase. 1 row per country and month
     - Final: ROW_NUMBER by revenue increase (partitioning) with month as tie breaker then in outer query Filter to largest revenue increase and return specified rows at grain: 1 row per billing country
+
+
+# Day 6
+
+- Repeated Leetcode 197: Rising Temp as a warm up (9 min, brain froze for a few minutes, should talk through what i need to calculate)
+
+- Exam
+        ```
+        Start your timer when you begin reading.
+
+        ## Week 11 Exam: Customer Monthly Spend Profile
+
+        **Database:** Chinook (SQLite)
+        **Target:** under 12 minutes. **Hard stop:** 25 minutes.
+        **Allowed:** nothing but the editor and the database.
+
+        ### Task
+
+        For each customer, show their spending month by month, how each month compares with their running average up to that point, and which month was their peak.
+
+        ### Output grain
+
+        One row per customer per calendar month **in which that customer has at least one invoice.** Months with no invoices do *not* need to appear.
+
+        ### Output columns, in this order
+
+        | Column | Definition |
+        |---|---|
+        | `customer_id` | The customer's ID. |
+        | `customer_name` | First name and last name, separated by a single space. |
+        | `year_month` | The calendar month, formatted `YYYY-MM`. |
+        | `month_spend` | The sum of that customer's invoice totals in that month. |
+        | `running_mean` | The average of that customer's `month_spend` values over all their months **up to and including this one,** in chronological order. |
+        | `delta_vs_mean` | `month_spend` minus `running_mean`. |
+        | `is_peak` | `1` for the customer's single highest-`month_spend` month, `0` for every other month. If two or more months tie for highest, the **earliest** of those months is the peak. Each customer has exactly one peak month. |
+
+        ### Formatting
+
+        - Round `month_spend`, `running_mean` and `delta_vs_mean` to 2 decimal places, in the final output only.
+        - Sort by `customer_id`, then `year_month`.
+
+        When you're done, paste in your query, your time, and any notes on where the time went.
+
+- Had this after 12min, a couple more min to sort out rounding and names but had no idea how to get a 1/0 flag column.
+
+WITH monthly_totals AS (SELECT 
+    CustomerId,
+    strftime('%Y-%m', InvoiceDate) AS year_month,
+    SUM(Total) AS month_spend
+FROM
+    Invoice
+GROUP BY
+    CustomerId,
+    strftime('%Y-%m', InvoiceDate)
+)
+SELECT 
+    CustomerId,
+    FirstName || ' ' || LastName AS customer_name,
+    year_month,
+    month_spend,
+    AVG(month_spend) OVER(PARTITION BY CustomerId ORDER BY year_month) AS running_mean,
+    month_spend - AVG(month_spend) OVER(PARTITION BY CustomerId ORDER BY year_month) AS delta_vs_mean
+FROM monthly_totals
+INNER JOIN Customer USING(CustomerId)
+
+- Thought for another 15 min and got to this (which doesnt work). I think SELECT 1 is the right approach but the subquery needs to be joined rather than in select
+
+WITH monthly_totals AS (SELECT 
+    CustomerId,
+    strftime('%Y-%m', InvoiceDate) AS year_month,
+    SUM(Total) AS month_spend
+FROM
+    Invoice
+GROUP BY
+    CustomerId,
+    strftime('%Y-%m', InvoiceDate)
+),
+ cte AS (SELECT 
+    CustomerId AS customer_id,
+    FirstName || ' ' || LastName AS customer_name,
+    year_month,
+    ROUND(month_spend, 2) AS month_spend,
+    ROUND(AVG(month_spend) OVER(PARTITION BY CustomerId ORDER BY year_month), 2) AS running_mean,
+    ROUND(month_spend - AVG(month_spend) OVER(PARTITION BY CustomerId ORDER BY year_month), 2) AS delta_vs_mean,
+    RANK() OVER(PARTITION BY CustomerId ORDER BY month_spend) AS is_peak
+FROM monthly_totals
+INNER JOIN Customer USING(CustomerId)
+ORDER BY CustomerId, year_month
+)
+
+SELECT 
+    customer_id,
+    customer_name,
+    year_month,
+    month_spend,
+    running_mean,
+    delta_vs_mean,
+    COALESCE((SELECT 1 FROM cte WHERE is_peak = 1), 0) AS is_peak
+FROM cte;
+- CASE statements! Knew I wanted an IF statement but totally forgot that CASE exists after so many window functions...
+
+- SQL toolbox (to help me remember what commands exist)
+    - Filter rows
+        - WHERE col = value
+        - WHERE col IN (subquery or list of values)
+            - WHERE col NOT IN (subquery): returns no rows if any nulls, prefer NOT EXISTS
+        - WHERE col LIKE '%A_'
+        - WHERE EXISTS (subquery)
+        - WHERE NOT EXISTS (subquery)
+        - WHERE col BETWEEN value AND value
+        - WHERE col IS NULL / IS NOT NULL
+    - Filter groups
+        - HAVING SUM(col) > 5: filter groups by a condition on an aggregate
+    - Combine tables
+        - INNER JOIN: present in both tables
+        - LEFT JOIN: all left values and their matches in right
+        - CROSS JOIN: cartesian product
+        - UNION: combines 2 queries, no duplicates
+        - UNION ALL: combines 2 queries, keeps all records inc duplicates
+        - EXCEPT: combines 2 queries, rows from first not in second, no duplicates
+        - INTERSECT: combines 2 queries, rows in both, no duplicates
+        - ON a.col = b.col AND col = value: resticts which rows match
+        - self join: different aliases, useful in a hierarchy or comparing rows in a table
+        - anti join (LEFT JOIN + WHERE right.key IS NULL): Finds rows with no match
+    - Aggregate
+        - COUNT(col) / COUNT(DISTINCT col)
+        - SUM
+        - AVG: mean
+        - MIN / MAX
+        - STDDEV (postgres)
+        - SUM(CASE WHEN ... THEN ... END): Conditional aggregation
+    - Window aggregates
+        - All of above with OVER()
+        - Frame syntax
+            - ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            - ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+            - RANGE BETWEEN INTERVAL '2' DAY PRECEDING AND CURRENT ROW
+    - Query structure
+        - CTEs: WITH name AS(query)
+        - Subqueries: (query)
+        - Windows must go in a CTE to then be filtered in outer query
+    - Compute per-row value
+        - CASE WHEN col < 2 THEN 1 ELSE 0 END AS name: SQLs IF statement
+        - || or CONCAT(col, col): concatenate
+        - strftime('%Y-%m', col) AS month
+        - julianday(col): decimal days for subtracting
+        - UPPER / LOWER(col)
+        - ROUND(col, 2)
+    - Compare across rows
+        - LAG(col, offset, null_fill) OVER(PARTITION BY col2 ORDER BY col3)
+        - LEAD(col, offset, null_fill) OVER(PARTITION BY col2 ORDER BY col3)
+    - Rank
+        - RANK(): ties get same rank number and consecutive ranks are skipped
+        - DENSE_RANK(): ties get same rank number and consecutive ranks follow on directly
+        - ROW_NUMBER(): all uniquely numbered by row, ties arbitrarily decided unless ORDER BY is determinative
+    - Generate rows
+        - RECURSIVE CTE: used to generate calendar
+    - Handle NULLS and types
+        - COALESCE(col, 0)
+        - NULLIF(col, 0)
+        - CAST(col AS numeric) or col::numeric (postgres)
+    - Sort and shape
+        - ORDER BY col
+        - LIMIT 5
+        - SELECT DISTINCT
+    - Inspect (SQLite)
+        - EXPLAIN QUERY PLAN
+        - PRAGMA table_info(table_name)
+        - PRAGMA index_list(table_name)
+        - PRAGMA index_info(index_name)
+        - PRAGMA foreign_key_list(table_name)
+        - SELECT name FROM sqlite_master WHERE type = 'table'
+        - (Postgres): information_schema.columns
+     
+    
