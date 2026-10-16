@@ -664,4 +664,8 @@ FROM cte;
         - SELECT name FROM sqlite_master WHERE type = 'table'
         - (Postgres): information_schema.columns
      
-    
+# Day 7
+
+- Looked over checklist and toolbox
+- Completed Leetcode 184 (highest salary) as warm up (10 min, but lost a couple of min thinking about groupby rather than ranking, and lost a few min just forgetting my ON and putting alias in wrong place)
+- Completed Leetcode 1407 (Top Travellers) - 4min
