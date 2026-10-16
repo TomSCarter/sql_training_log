@@ -148,8 +148,8 @@
         SUM(Total) AS total_invoiced_amount
     FROM Customer AS c
     LEFT JOIN Invoice AS i USING(CustomerId)
-
     GROUP BY c.CustomerId, c.FirstName, c.LastName; -- Shows correct total_invoiced_amounts (ca. 38) but no track count
+    ```
 
     - Joining finer grain table to coarser grain, multiples the coarser column, so you cant them sum the coarser column. You have to aggregate before the join to match the grains. So could have prepared two CTEs then done both aggregations after joining them. But I prefered to do 1 CTE inc an aggregation then join and do the other.
 
@@ -174,6 +174,7 @@
             c.CustomerId, 
             c.FirstName, 
             c.LastName;
+     ```
 
 
 - Northwind join chain. For each shipper (the courier company: Orders.ShipVia joins to Shippers.ShipperID) and each product category, find total revenue, with discount applied, from the order details. The order details table name contains a space, so remember how to quote it.
@@ -227,6 +228,7 @@
             FROM Track 
             WHERE Milliseconds > (2 * 60 * 1000)
         );
+        ```
     
         ```
                     QUERY PLAN
@@ -239,6 +241,7 @@
             |--SCAN grouped_genres
             `--SCALAR SUBQUERY 2
             `--SCAN Track
+            ```
 
 
     - Version using HAVING
@@ -265,15 +268,17 @@
                 WHERE 
                     Milliseconds > (2 * 60 * 1000)
                 );
+```
 
-        
+        ```
         QUERY PLAN
         |--SCAN t USING INDEX IFK_TrackGenreId
         |--SEARCH g USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN
         |--USE TEMP B-TREE FOR GROUP BY
         `--SCALAR SUBQUERY 1
         `--SCAN Track
-     
+     ```
+
 - > **Day 2 theme:** SQLite's leniency hid my bugs. Every column in SELECT or HAVING must be grouped or aggregated, otherwise SQLite silently uses an arbitrary row. A WHERE on the optional table, a later INNER JOIN, or starting from the wrong table all silently undo a LEFT JOIN. Sanity checks against simple single-table queries caught what the output hid.
 
 - Indexing for performance
@@ -334,6 +339,7 @@ Day 4: LAG/LEAD and Chronological Offsets
         FROM calendar
         WHERE date(month_start, '+1 month') <= (SELECT MAX(InvoiceDate) FROM Invoice)
         ),
+        ```
     
     - Anchor, recursive part, stop condition
     - 'start of month' as second argument in date means the date is always start of the month
@@ -385,6 +391,8 @@ Trimmed:
 - Leetcode 1164
     - Grain: 1 row per product from 1 row per price change per product
     - 15 min. But breaks when a product with no price change is input (needing default price of 10). Need to fill those products without a change date with 10?
+
+    ```
         WITH filtered_date AS(
             SELECT 
                 product_id,
@@ -408,8 +416,11 @@ Trimmed:
         FROM
             change_dates c
         INNER JOIN Products p on c.recent_change = p.change_date AND c.product_id = p.product_id
+    ```
+
     - Faffed around before realising I just needed a list of distinct product_ids
-  
+
+  ```
         WITH filtered_date AS(
             SELECT 
                 product_id,
@@ -442,7 +453,11 @@ Trimmed:
         FROM
             (SELECT DISTINCT product_id FROM Products) p
         LEFT JOIN latest_price l ON p.product_id = l.product_id
+        ```
+
 - rewrote with window, cleaner
+
+```
         WITH latest_prices AS(
             SELECT
                 product_id,
@@ -460,8 +475,11 @@ Trimmed:
             (SELECT DISTINCT product_id FROM Products) x 
         LEFT JOIN latest_prices l ON x.product_id = l.product_id
         WHERE rank = 1 OR rank IS NULL
+```
 
 - Moved condition from WHERE to ON, more efficient
+
+```
         WITH latest_prices AS(
             SELECT
                 product_id,
@@ -478,6 +496,7 @@ Trimmed:
         FROM
             (SELECT DISTINCT product_id FROM Products) x 
         LEFT JOIN latest_prices l ON x.product_id = l.product_id AND rank = 1
+```
 
 - Block 2: A multi-tier pipeline from scratch (local, 30 min)
 
@@ -535,6 +554,7 @@ Trimmed:
 
 - Had this after 12min, a couple more min to sort out rounding and names but had no idea how to get a 1/0 flag column.
 
+```
 WITH monthly_totals AS (SELECT 
     CustomerId,
     strftime('%Y-%m', InvoiceDate) AS year_month,
@@ -554,9 +574,11 @@ SELECT
     month_spend - AVG(month_spend) OVER(PARTITION BY CustomerId ORDER BY year_month) AS delta_vs_mean
 FROM monthly_totals
 INNER JOIN Customer USING(CustomerId)
+```
 
 - Thought for another 15 min and got to this (which doesnt work). I think SELECT 1 is the right approach but the subquery needs to be joined rather than in select
 
+```
 WITH monthly_totals AS (SELECT 
     CustomerId,
     strftime('%Y-%m', InvoiceDate) AS year_month,
@@ -589,6 +611,8 @@ SELECT
     delta_vs_mean,
     COALESCE((SELECT 1 FROM cte WHERE is_peak = 1), 0) AS is_peak
 FROM cte;
+```
+
 - CASE statements! Knew I wanted an IF statement but totally forgot that CASE exists after so many window functions...
 
 - SQL toolbox (to help me remember what commands exist)
@@ -669,3 +693,139 @@ FROM cte;
 - Looked over checklist and toolbox
 - Completed Leetcode 184 (highest salary) as warm up (10 min, but lost a couple of min thinking about groupby rather than ranking, and lost a few min just forgetting my ON and putting alias in wrong place)
 - Completed Leetcode 1407 (Top Travellers) - 4min
+Exam:
+
+## Week 11 Exam (Retake): Genre Monthly Sales Profile
+
+**Database:** Chinook (SQLite)
+**Target:** under 12 minutes. **Hard stop:** 25 minutes.
+**Allowed:** nothing but the editor and the database.
+
+### Task
+
+For each genre, show units sold month by month, the cumulative total so far, each month's share of the genre's all-time units, and which month was the genre's best.
+
+### Output grain
+
+One row per genre per calendar month **in which at least one track of that genre was sold.** Months with no sales do *not* need to appear.
+
+### Output columns, in this order
+
+| Column | Definition |
+|---|---|
+| `genre_id` | The genre's ID. |
+| `genre_name` | The genre's name. |
+| `year_month` | The calendar month of the invoice, formatted `YYYY-MM`. |
+| `units_sold` | The total quantity of that genre's tracks sold in that month. |
+| `cumulative_units` | The genre's total `units_sold` over all its months **up to and including this one,** in chronological order. |
+| `share_of_genre` | This month's `units_sold` divided by the genre's total units across **all** its months, as a decimal between 0 and 1. |
+| `is_best_month` | `1` for the genre's single highest-`units_sold` month, `0` for every other month. If two or more months tie for highest, the **most recent** of those months is the best month. Each genre has exactly one best month. |
+
+### Formatting
+
+- Round `share_of_genre` to 3 decimal places, in the final output only.
+- Sort by `genre_id`, then `year_month`.
+
+My answer (28 min):
+```
+WITH monthly_sales AS(
+    SELECT
+       InvoiceId,
+        g.Name AS genre_name,
+        SUM(Quantity) AS units_sold
+    FROM
+        InvoiceLine
+    INNER JOIN Track t USING(TrackId)
+    INNER JOIN Genre g USING(GenreId)
+    GROUP BY g.Name, GenreId, InvoiceId
+
+),
+
+with_months AS (
+    SELECT
+        strftime('%Y-%m', InvoiceDate) AS sale_month,
+        genre_name,
+        units_sold
+    FROM
+        monthly_sales
+    INNER JOIN Invoice USING(InvoiceId)
+    GROUP BY sale_month, genre_name
+    ORDER BY genre_name, sale_month),
+
+windows AS (SELECT
+    sale_month,
+    genre_name,
+    units_sold,
+    SUM(units_sold) OVER(PARTITION BY genre_name ORDER BY sale_month) AS cumulative_units,
+    CAST(units_sold AS numeric) /  CAST(SUM(units_sold) OVER(PARTITION BY genre_name) AS numeric) AS share_of_genre
+FROM
+    with_months)
+
+SELECT
+    sale_month,
+    genre_name,
+    units_sold,
+    cumulative_units,
+    share_of_genre,
+    CASE WHEN ROW_NUMBER() OVER(PARTITION BY genre_name ORDER BY units_sold DESC, sale_month DESC) = 1 THEN 1
+    ELSE 0 END AS is_best_month
+FROM
+    windows
+```
+- Share of genre doesn't work, wasted much time trying to get it to work!
+- Analysis
+    - Claude told me that CAST(col AS numeric) worked in SQLite, it does not, it gives integers. You have to use CAST(col AS REAL) or just multiply by 1.0. This cost a lot of time
+    - I missed units_sold from the initial GROUP BY, so all the values were wrong from there
+    - Spelling mismatches, genre_id missing from final output
+    - Joining Invoice to InvoiceLine and Track first would have simplified. I was concerned about fan-out or if each invoice contained lines from multiple genres.
+        - Because Quantity is on InvoiceLine grain, joining Invoice just adds date
+
+```        
+Corrected:
+WITH monthly_sales AS(
+    SELECT
+       InvoiceId,
+        g.Name AS genre_name,
+        SUM(Quantity) AS units_sold,
+        GenreId
+    FROM
+        InvoiceLine
+    INNER JOIN Track t USING(TrackId)
+    INNER JOIN Genre g USING(GenreId)
+    GROUP BY g.Name, GenreId, InvoiceId
+
+),
+
+with_months AS (
+    SELECT
+        strftime('%Y-%m', InvoiceDate) AS year_month,
+        genre_name,
+        SUM(units_sold) AS units_sold,
+        GenreId
+    FROM
+        monthly_sales
+    INNER JOIN Invoice USING(InvoiceId)
+    GROUP BY year_month, genre_name, GenreId),
+
+windows AS (SELECT
+    year_month,
+    genre_name,
+    units_sold,
+    GenreId,
+    SUM(units_sold) OVER(PARTITION BY GenreId ORDER BY year_month) AS cumulative_units,
+    (units_sold * 1.0) / (1.0 * SUM(units_sold) OVER(PARTITION BY GenreId)) AS share_of_genre
+FROM
+    with_months)
+
+SELECT
+    GenreId AS genre_id,
+    genre_name,
+    year_month,
+    units_sold,
+    cumulative_units,
+    ROUND(share_of_genre, 3) AS share_of_genre,
+    CASE WHEN ROW_NUMBER() OVER(PARTITION BY GenreId ORDER BY units_sold DESC, year_month DESC) = 1 THEN 1
+    ELSE 0 END AS is_best_month
+FROM
+    windows
+ORDER BY genre_id, year_month;
