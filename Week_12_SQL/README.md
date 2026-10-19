@@ -69,7 +69,7 @@ ORDER BY a.city, a.customer_id, b.customer_id;
 -- null = null is unknown, only true is kept (not null=null is still unknown)
 -- 'london ' would need INITCAP() (postgres) or standardise with UPPER and TRIM()
 ```
-
+- 15 min. Fail, had it but including duplicate pairs and joining on name rather than id
 - Needed some hints to realise that id < id was the way to remove duplicates (I had id <> id)
 
 ### Problem B: LeetCode 1731
