@@ -1,25 +1,31 @@
 # Day 1
 - Bucketing
+    - Classify every track as Short (under 3 min), Medium (3–6 min) or Long (over 6 min). For each genre, show how many tracks fall into each bucket. Watch the units the Milliseconds column uses and where your boundaries sit.
     - Time Taken: ca. 12 min but did give an unintentionly incomplete answer to Claude after 11 min
     - Errors: Lost Case categories in final step, forgot to include them in grouping. Redundant logic: WHEN statements run in order, so lower bounds not needed. Style consistency issues (as/AS, aliases that are functions or tables e.g. count, genre, indents)
     - Concept: A CASE in SELECT is just another per-row expression: it must be grouped by or aggregated.
 - Conditional aggregation
+    - Conditional aggregation (pivot). Produce one row per billing country with three columns: total revenue, revenue from invoices of $10 or more, and revenue from invoices under $10. You should only need a single pass over the Invoice table.
     - Time Taken: 15 min, unfinished. Because CASE in SELECT runs after GROUP BY each country was one or >10 or <10. Was going to split into CTE but task says 'a single pass over the Invoice table'?
     - Errors: 
     - Concept: Must be inside aggregate to be run per row in grouping. When you aggregate CASE, the brackets end after END. Non-qualifying rows will be NULL, could make zero with ELSE 0
 - WHERE vs HAVING
+    - Find genres whose average unit price is above the overall average unit price, counting only tracks longer than 2 minutes. Before you start, decide which condition is a row filter and which is a group filter.
     - Time Taken: 13min - wrong
     - Errors: The duration filter is in the wrong clause. "Tracks longer than 2 minutes" is a condition on individual tracks, so it's a row filter that must run before grouping. "Overall average" is computed as an average of averages
     - Concept: This is the third time the bare-column leniency has hidden a bug, so it's definitely a Friday pattern. "row filter in HAVING → bare column", "average of averages ≠ overall average (weighting)" "written clause order vs logical execution order" (put WHICH in the right place!)
 - Labelling on aggregates
+    - Label each customer High, Mid or Low value based on lifetime spend (choose sensible thresholds after a quick look at the distribution). Then, for each support rep, count their High-value customers and show only reps with at least 3. Think about whether this fits in one query level or needs layering.
     - Time Taken: 15min - ran out of time, wrote first part but only had 3 min for support rep section and wasted time looking at a join with Employee. Additional 4min to finish correctly.
     - Errors: Used LEFT JOIN then didnt address nulls (should just use INNER). Some indentation missing
     - Concept: NULL comparisons evaluate to unknown, so they fall through to ELSE
 - Custom sort order
+    - List customers sorted with USA first, then Canada, then all other countries alphabetically, and by last name within each country.
     - Time Taken: 5 min, small error
     - Errors: 'CANADA' doesnt match 'Canada' should have spotted in output. Style: No brackets needed on CASE
     - Concept: "string equality is case-sensitive; check stored values"
 - NULL-aware CASE (Northwind)
+    - Classify every order as "Not shipped", "Shipped late" or "Shipped on time" using ShippedDate and RequiredDate. Then count orders per category for each shipper. The order of your WHEN branches matters here, so think about it before you write any code.
     - Time taken: 15 min
     - Errors: Claude poorly framed the problem and wanted ShipperId from a different table (joined by matching two differently named keys), rather than the person who shipped the order as I wrote. I gather Shipper means Courier here not person who shipped. Set CASE to catch NULLS in ELSE, but this mixes them with ERRORS and null requireddate
     - concept 
@@ -268,18 +274,18 @@
                 WHERE 
                     Milliseconds > (2 * 60 * 1000)
                 );
-```
-
         ```
-        QUERY PLAN
-        |--SCAN t USING INDEX IFK_TrackGenreId
-        |--SEARCH g USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN
-        |--USE TEMP B-TREE FOR GROUP BY
-        `--SCALAR SUBQUERY 1
-        `--SCAN Track
-     ```
 
-- > **Day 2 theme:** SQLite's leniency hid my bugs. Every column in SELECT or HAVING must be grouped or aggregated, otherwise SQLite silently uses an arbitrary row. A WHERE on the optional table, a later INNER JOIN, or starting from the wrong table all silently undo a LEFT JOIN. Sanity checks against simple single-table queries caught what the output hid.
+    ```
+    QUERY PLAN
+    |--SCAN t USING INDEX IFK_TrackGenreId
+    |--SEARCH g USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN
+    |--USE TEMP B-TREE FOR GROUP BY
+    `--SCALAR SUBQUERY 1
+    `--SCAN Track
+
+
+- **Day 2 theme:** SQLite's leniency hid my bugs. Every column in SELECT or HAVING must be grouped or aggregated, otherwise SQLite silently uses an arbitrary row. A WHERE on the optional table, a later INNER JOIN, or starting from the wrong table all silently undo a LEFT JOIN. Sanity checks against simple single-table queries caught what the output hid.
 
 - Indexing for performance
 
@@ -829,3 +835,31 @@ SELECT
 FROM
     windows
 ORDER BY genre_id, year_month;
+```
+
+# Retrospective
+
+## Automatic
+WHERE vs HAVING vs filtering in an outer layer
+Running totals, moving averages
+LAG/LEAD, and the row-vs-date trap
+CASE labels
+
+## Understood but slow
+Aggregating to the right grain, and aggregating before joining (fan-out)
+CASE flags
+Preserving unmatched rows (the entity-list base + LEFT JOIN pattern)
+Choosing between ROW_NUMBER, RANK and DENSE_RANK, and tiebreakers
+Top-N per partition, and latest/first record per entity
+Explicit frames (ROWS vs RANGE)
+Share of total with OVER () (mostly just remembering how to handle the integer division)
+Multi-tier CTE refactoring, and proving equivalence with EXCEPT
+Dialect details: casting, integer division, scalar subqueries, SQLite leniency
+
+
+## Not yet trusted
+Conditional aggregation (SUM(CASE ...))
+Anti-joins and self-joins
+Recursive CTEs and the date spine
+Reading query plans and indexes
+
