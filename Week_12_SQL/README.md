@@ -363,3 +363,124 @@ FROM wins
 WHERE date_diff IS NOT NULL
 ORDER BY visited_on
 ```
+
+# Day 5
+
+
+Exam 1 redo, the brief:
+
+## Week 11 Exam: Customer Monthly Spend Profile
+
+**Database:** Chinook (SQLite)
+**Target:** under 12 minutes. **Hard stop:** 25 minutes.
+**Allowed:** nothing but the editor and the database.
+
+### Task
+
+For each customer, show their spending month by month, how each month compares with their running average up to that point, and which month was their peak.
+
+### Output grain
+
+One row per customer per calendar month **in which that customer has at least one invoice.** Months with no invoices do *not* need to appear.
+
+### Output columns, in this order
+
+| Column | Definition |
+|---|---|
+| `customer_id` | The customer's ID. |
+| `customer_name` | First name and last name, separated by a single space. |
+| `year_month` | The calendar month, formatted `YYYY-MM`. |
+| `month_spend` | The sum of that customer's invoice totals in that month. |
+| `running_mean` | The average of that customer's `month_spend` values over all their months **up to and including this one,** in chronological order. |
+| `delta_vs_mean` | `month_spend` minus `running_mean`. |
+| `is_peak` | `1` for the customer's single highest-`month_spend` month, `0` for every other month. If two or more months tie for highest, the **earliest** of those months is the peak. Each customer has exactly one peak month. |
+
+### Formatting
+
+- Round `month_spend`, `running_mean` and `delta_vs_mean` to 2 decimal places, in the final output only.
+- Sort by `customer_id`, then `year_month`.
+
+
+My answer:
+
+```sql
+
+-- Base: Join Invoice and Customer, extract year_month
+-- Agg: SUM(Total), GROUP BY customer_id and year_month
+-- Windows: AVG window
+-- CASE WHEN flag
+-- Final grain: 1 row per customer x month. With comparison to running average and flag for peak
+--4min
+
+WITH base AS(SELECT
+    i.customerid,
+    c.FirstName || ' ' || c.LastName AS customer_name,
+    strftime('%Y-%m', i.InvoiceDate) AS year_month,
+    i.Total
+FROM
+    Invoice i
+INNER JOIN
+    Customer c USING (customerid)),
+    -- 12min wrote for Postgres to start
+agg AS(SELECT
+    customerid,
+    customer_name,
+    year_month,
+    SUM(Total) AS month_spend
+FROM base
+GROUP BY
+    customerid,
+    customer_name,
+    year_month),
+
+winds AS(SELECT
+    customerid,
+    customer_name,
+    year_month,
+    month_spend,
+    AVG(month_spend) OVER(PARTITION BY customerid ORDER BY year_month ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_mean,
+    ROW_NUMBER() OVER(PARTITION BY customerid ORDER BY month_spend DESC, year_month) AS rowrank
+FROM agg)
+
+SELECT
+    customerid AS customer_id,
+    customer_name,
+    year_month,
+    ROUND(month_spend, 2) AS month_spend,
+    ROUND(running_mean, 2) AS running_mean,
+   ROUND(month_spend - running_mean, 2) AS delta_vs_mean,
+    CASE WHEN rowrank = 1 THEN 1 ELSE 0 END AS is_peak
+FROM winds
+ORDER BY customer_id, year_month
+-- 23min. Whether there should be some COALESCEs in there
+```
+
+- Pass on correctness but too slow. Lost perhaps 5min on trying to remember TO_CHAR then realising this is SQLite and trying to remember strftime. Also had to stop in the middle for a bit. Still can't quite imagine doing this in 12 min.
+
+- The first 2 and second 2 parts could be combined into 1 CTE and a final query but it would be less readable
+```sql
+WITH base AS(SELECT
+    i.customerid,
+    c.FirstName || ' ' || c.LastName AS customer_name,
+    strftime('%Y-%m', i.InvoiceDate) AS year_month,
+    SUM(i.Total) AS month_spend
+FROM
+    Invoice i
+INNER JOIN
+    Customer c USING (customerid)
+GROUP BY
+    customerid,
+    customer_name,
+    year_month)
+
+SELECT
+    customerid AS customer_id,
+    customer_name,
+    year_month,
+    ROUND(month_spend, 2) AS month_spend,
+    ROUND(AVG(month_spend) OVER(PARTITION BY customerid ORDER BY year_month ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 2) AS running_mean,
+   ROUND(month_spend -  AVG(month_spend) OVER(PARTITION BY customerid ORDER BY year_month ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 2) AS delta_vs_mean,
+    CASE WHEN ROW_NUMBER() OVER(PARTITION BY customerid ORDER BY month_spend DESC, year_month) = 1 THEN 1 ELSE 0 END AS is_peak
+FROM base
+ORDER BY customer_id, year_month
+```
